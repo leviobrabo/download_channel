@@ -5,6 +5,8 @@ import sys
 import shutil
 import time
 from telethon import TelegramClient, events, errors
+from telethon.errors import FloodWaitError
+
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 
 # =============================================================================
@@ -296,8 +298,13 @@ async def main():
     # 1) Inicia o userbot (conta de usuário)
     #    Se for a primeira vez, pedirá código SMS no console.
     # ---------------------------------------------------------------------
-    await userbot_client.start(phone=user_phone)
-    logger.info("[Userbot] Conectado com sucesso.")
+    try:
+        await userbot_client.start(phone=user_phone)
+    except FloodWaitError as e:
+        print(f"O Telegram pediu para aguardar {e.seconds} segundos. Aguardando...")
+        await asyncio.sleep(e.seconds)
+        # Tenta de novo
+        await userbot_client.start(phone=user_phone)
 
     # ---------------------------------------------------------------------
     # 2) Inicia o bot
