@@ -6,6 +6,7 @@ import shutil
 import time
 from telethon import TelegramClient, errors
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
+from telethon.tl.functions.channels import JoinChannelRequest
 
 # Configurações do Script
 api_id = '25600801'
@@ -159,6 +160,8 @@ async def main():
 
     try:
         # Obtém as Entidades dos Canais (Funciona com Links e IDs)
+        logger.info(f"Tentando juntar-se ao canal de origem: {canal_origem}")
+        await client(JoinChannelRequest(canal_origem))
         entidade_origem = await client.get_entity(canal_origem)
         entidade_destino = await client.get_entity(canal_destino)
     except ValueError as ve:
