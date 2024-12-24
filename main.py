@@ -14,7 +14,7 @@ telefone = '+5571988130989'  # Inclua o código do país, ex: +5511999999999
 
 # Links dos Canais de Origem e Destino
 canal_origem = 'https://t.me/+BUKu5dBedWEzYzVh'
-canal_destino = 'https://t.me/+kz7sg6QI8S02ZmUx'
+canal_destino = 'https://t.me/+iKcNonO2s4szMmVh'
 
 # Diretório para Salvar os Arquivos Baixados Temporariamente
 pasta_download = 'downloads'
