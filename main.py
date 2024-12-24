@@ -8,10 +8,17 @@ from telethon import TelegramClient, events, errors
 from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 
 # =============================================================================
-# CONFIGURAÇÕES DO BOT E PARÂMETROS GERAIS
+# CONFIGURAÇÕES DA CONTA DE USUÁRIO (USERBOT)
 # =============================================================================
-api_id = '25600801'
-api_hash = '20b2f83fbae27a8f6d2fa650228d0ff9'
+user_api_id = '25600801'
+user_api_hash = '20b2f83fbae27a8f6d2fa650228d0ff9'
+user_phone = '+5571988130989'
+
+# =============================================================================
+# CONFIGURAÇÕES DO BOT
+# =============================================================================
+bot_api_id  = '25600801'
+bot_api_hash = '20b2f83fbae27a8f6d2fa650228d0ff9'
 BOT_TOKEN = '7795800821:AAGfbyUWAJbdSB2OWfoZiMu0l22Waje1yWo'   # Fornecido pelo @BotFather
 
 # Canal de destino (fixo)
@@ -50,8 +57,14 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Inicia cliente do Telethon como BOT
-client = TelegramClient('bot_session', api_id, api_hash)
+# Cria as sessões separadas
+userbot_session = 'userbot_session'
+bot_session = 'bot_session'
+
+# Clientes do Telethon
+userbot_client = TelegramClient(userbot_session, user_api_id, user_api_hash)
+bot_client = TelegramClient(bot_session, bot_api_id, bot_api_hash)
+
 
 # Dicionário para rastrear a última atualização de progresso por mensagem
 last_progress_update = {}
@@ -74,7 +87,7 @@ def verificar_tamanho_pasta(pasta, tamanho_max_mb):
     tamanho_mb = total_size / (1024 * 1024)
 
     if tamanho_mb > tamanho_max_mb:
-        logger.info(f"Tamanho da pasta de cache excedeu {cache_folder_max_size_mb} MB. Iniciando limpeza.")
+        logger.info(f"Tamanho da pasta de cache excedeu {tamanho_max_mb} MB. Iniciando limpeza.")
         shutil.rmtree(pasta)
         os.makedirs(pasta)
         logger.info("Pasta de cache limpa com sucesso.")
@@ -102,207 +115,209 @@ def retry_decorator():
     return retry(
         stop=stop_after_attempt(5),
         wait=wait_fixed(5),
-        retry=retry_if_exception_type((errors.FloodWaitError, errors.RPCError, asyncio.TimeoutError))
+        retry=retry_if_exception_type(
+            (errors.FloodWaitError, errors.RPCError, asyncio.TimeoutError)
+        )
     )
 
 
 @retry_decorator()
 async def processar_mensagem(mensagem, entidade_destino, semaphore):
     """
-    Processa uma única mensagem: se tiver mídia, baixa e envia;
-    se for texto, reenvia como texto.
+    Processa uma única mensagem (userbot).
+    Se tiver mídia, baixa e envia; se for texto, reenvia como texto.
+    Usa `processed_messages_file` para evitar duplicados.
     """
     async with semaphore:
         try:
-            # Se a mensagem já foi processada, sai
             if mensagem.id in processed_ids:
                 return
 
             if mensagem.media:
-                # Define o nome do arquivo
                 nome_arquivo = mensagem.file.name if mensagem.file and mensagem.file.name else f'arquivo_{mensagem.id}'
                 caminho_arquivo = os.path.join(pasta_download, nome_arquivo)
 
-                # Verifica e limpa a pasta se necessário
                 verificar_tamanho_pasta(pasta_download, cache_folder_max_size_mb)
 
-                # Faz download com callback de progresso
+                # Download (pelo userbot)
                 await mensagem.download_media(
                     file=caminho_arquivo,
                     progress_callback=lambda current, total: progress_display(
-                        current, total, f"Baixando {nome_arquivo}: ", mensagem.id
+                        current, total, f"[Userbot] Baixando {nome_arquivo}: ", mensagem.id
                     )
                 )
-                logger.info(f"Baixado: {caminho_arquivo}")
+                logger.info(f"[Userbot] Baixado: {caminho_arquivo}")
 
-                # Breve delay para respeitar limites
+                # Pequeno delay
                 await asyncio.sleep(bot_delay_seconds)
 
-                # Envia o arquivo ao canal de destino
-                await client.send_file(
+                # Envia ao canal de destino (pelo userbot)
+                await userbot_client.send_file(
                     entidade_destino,
                     caminho_arquivo,
                     caption=mensagem.message or '',
                     progress_callback=lambda current, total: progress_display(
-                        current, total, f"Enviando {nome_arquivo}: ", mensagem.id
+                        current, total, f"[Userbot] Enviando {nome_arquivo}: ", mensagem.id
                     )
                 )
-                logger.info(f"Enviado para o canal de destino: {caminho_arquivo}")
+                logger.info(f"[Userbot] Enviado para o canal de destino: {caminho_arquivo}")
 
-                # Outro delay pós-envio
-                await asyncio.sleep(bot_delay_seconds)
-
-                # Remove o arquivo baixado
+                # Apaga arquivo local
                 os.remove(caminho_arquivo)
-                logger.info(f"Removido arquivo local: {caminho_arquivo}")
+                logger.info(f"[Userbot] Removido arquivo local: {caminho_arquivo}")
 
             elif mensagem.message:
-                # Se for apenas texto, envia como texto
-                await client.send_message(entidade_destino, mensagem.message)
-                logger.info(f"Mensagem de texto enviada (ID {mensagem.id}): {mensagem.message}")
-                await asyncio.sleep(bot_delay_seconds)
+                # Mensagem de texto
+                await userbot_client.send_message(entidade_destino, mensagem.message)
+                logger.info(f"[Userbot] Mensagem de texto enviada (ID {mensagem.id}): {mensagem.message}")
 
-            # Marca a mensagem como processada
+            # Marca como processada
             async with file_lock:
                 with open(processed_messages_file, 'a') as f:
                     f.write(f"{mensagem.id}\n")
                 processed_ids.add(mensagem.id)
 
         except errors.FloodWaitError as e:
-            logger.warning(f"FloodWaitError: Esperando {e.seconds} segundos.")
+            logger.warning(f"[Userbot] FloodWaitError: Esperando {e.seconds} segundos.")
             await asyncio.sleep(e.seconds)
-            raise e  # Re-lança para tentar novamente (tenacity)
+            raise e
         except Exception as e:
-            logger.error(f"Erro ao processar a mensagem {mensagem.id}: {e}")
+            logger.error(f"[Userbot] Erro ao processar a mensagem {mensagem.id}: {e}")
             raise e
 
 
-# =============================================================================
-# EVENTOS DO BOT
-# =============================================================================
-
-@client.on(events.NewMessage(pattern='/start'))
-async def start(event):
+async def transferir_canal(canal_origem, user_chat_id):
     """
-    Comando /start para iniciar a conversa.
+    Faz a transferência das mensagens do `canal_origem` para o `canal_destino`.
+    - Lê o canal de origem (pelo userbot)
+    - Envia para o canal destino (userbot)
+    - Envia status pelo bot para o usuário que digitou o link.
     """
-    await event.respond(
-        "Olá! Envie o link do canal de origem (por exemplo, https://t.me/xxx ou @xxx) "
-        "para que eu possa começar a transferir as mensagens para o canal de destino fixo."
-    )
-
-
-@client.on(events.NewMessage)
-async def receber_link(event):
-    """
-    Recebe mensagens do usuário. Se for um link de canal,
-    inicia a transferência de mensagens.
-    """
-    # Ignora se for comando /start, pois já tratado acima
-    if event.text.startswith('/start'):
+    # Tenta obter entidades pelo userbot
+    try:
+        entidade_origem = await userbot_client.get_entity(canal_origem)
+    except Exception as e:
+        erro = f"Erro ao acessar canal de origem '{canal_origem}': {e}"
+        logger.error(erro)
+        await bot_client.send_message(user_chat_id, erro)
         return
-
-    # O que vier aqui, vamos assumir que seja o link do canal de origem
-    canal_origem = event.text.strip()
-
-    # Verifica se é plausivelmente um link/username de canal
-    if ('t.me/' not in canal_origem) and (not canal_origem.startswith('@')):
-        await event.respond("Isso não parece ser um link/username de canal válido. Tente novamente.")
-        return
-
-    await event.respond(f"Recebi o canal de origem: {canal_origem}. Iniciando a transferência...")
-    logger.info(f"Usuário pediu para transferir do canal: {canal_origem}")
 
     try:
-        # Obtém a entidade do canal de origem e de destino
-        entidade_origem = await client.get_entity(canal_origem)
-        entidade_destino = await client.get_entity(canal_destino)
-    except ValueError as ve:
-        logger.error(f"Erro ao obter as entidades dos canais: {ve}")
-        await event.respond(f"Erro ao acessar o canal: {ve}")
-        return
-    except errors.UsernameNotOccupiedError as e:
-        logger.error(f"Username inválido fornecido: {e}")
-        await event.respond("O link/username do canal de origem é inválido ou não existe.")
-        return
-    except errors.ChannelPrivateError as e:
-        logger.error(f"Canal privado ou sem acesso: {e}")
-        await event.respond("O canal de origem é privado ou não tenho acesso.")
-        return
+        entidade_destino = await userbot_client.get_entity(canal_destino)
     except Exception as e:
-        logger.error(f"Erro desconhecido ao obter entidades: {e}")
-        await event.respond(f"Erro desconhecido: {e}")
+        erro = f"Erro ao acessar canal de destino '{canal_destino}': {e}"
+        logger.error(erro)
+        await bot_client.send_message(user_chat_id, erro)
         return
 
-    # Limita o número de tarefas simultâneas
+    # Contar total de mensagens (só pra status)
+    await bot_client.send_message(user_chat_id, "[Userbot] Contando mensagens no canal de origem...")
+    total_mensagens = 0
+    async for _ in userbot_client.iter_messages(entidade_origem):
+        total_mensagens += 1
+
+    if total_mensagens == 0:
+        await bot_client.send_message(user_chat_id, "Não há mensagens nesse canal para transferir.")
+        return
+
+    await bot_client.send_message(
+        user_chat_id,
+        f"Encontradas {total_mensagens} mensagens. Iniciando envio..."
+    )
+
+    # Para evitar sobrecarga
     semaphore = asyncio.Semaphore(1)
 
     contador = 0
-    total_mensagens = 0
-
-    # Primeiro, calcula quantas mensagens há para processar
-    await event.respond("Calculando quantidade de mensagens...")
-    async for _ in client.iter_messages(entidade_origem):
-        total_mensagens += 1
-
-    # Se não encontrou mensagens, encerra
-    if total_mensagens == 0:
-        await event.respond("Não há mensagens nesse canal para transferir.")
-        return
-
-    await event.respond(f"Encontrei {total_mensagens} mensagens. Iniciando processamento...")
-
-    # Lista de tarefas
     tarefas = []
-
-    # Processa as mensagens (do mais antigo para o mais novo)
-    async for mensagem in client.iter_messages(entidade_origem, reverse=True):
+    async for mensagem in userbot_client.iter_messages(entidade_origem, reverse=True):
+        # Se já processamos, pula
         if mensagem.id in processed_ids:
             continue
 
-        # Cria tarefa
         tarefa = asyncio.create_task(processar_mensagem(mensagem, entidade_destino, semaphore))
         tarefas.append(tarefa)
 
         contador += 1
-        # A cada 10 mensagens (por exemplo), manda update
+        # A cada 10 msgs, manda update
         if contador % 10 == 0:
             porcentagem = (contador / total_mensagens) * 100
-            await event.respond(
+            await bot_client.send_message(
+                user_chat_id,
                 f"Progresso: {contador}/{total_mensagens} mensagens ({porcentagem:.2f}%)."
             )
-            # Pequeno delay para não atropelar
             await asyncio.sleep(user_delay_seconds)
 
-    # Aguarda todas as tarefas finalizarem
+    # Aguarda finalização de tudo
     results = await asyncio.gather(*tarefas, return_exceptions=True)
 
     # Verifica se houve exceções
     for r in results:
         if isinstance(r, Exception):
-            logger.error(f"Exceção capturada: {r}")
+            logger.error(f"[Userbot] Exceção capturada no gather: {r}")
 
-    await event.respond("Todas as mensagens do canal informado foram transferidas com sucesso!\n"
-                        "Se quiser processar outro canal de origem, envie o novo link agora.")
+    await bot_client.send_message(
+        user_chat_id,
+        f"Todas as {contador} mensagens foram transferidas com sucesso!"
+    )
+
+
+# =============================================================================
+# EVENTOS DO BOT (RECEBE LINK E PASSA PARA USERBOT)
+# =============================================================================
+
+@bot_client.on(events.NewMessage(pattern='/start'))
+async def start_cmd(event):
+    await event.respond(
+        "Olá! Envie o link do canal de origem (por exemplo, https://t.me/xxx ou @xxx)."
+        "\nO userbot fará a transferência para o canal de destino pré-configurado."
+    )
+
+@bot_client.on(events.NewMessage)
+async def receber_link(event):
+    """
+    Se não for /start, consideramos que o texto é o link do canal de origem.
+    """
+    if event.text.startswith('/start'):
+        return
+
+    canal_origem = event.text.strip()
+    chat_id = event.chat_id
+
+    await event.respond(f"Recebi o canal de origem: {canal_origem}. Tentando iniciar transferência...")
+    asyncio.create_task(transferir_canal(canal_origem, chat_id))
 
 
 # =============================================================================
 # FUNÇÃO MAIN
 # =============================================================================
-
 async def main():
-    # Inicia o bot
-    await client.start(bot_token=BOT_TOKEN)
-    logger.info("Bot iniciado e aguardando mensagens...")
+    # ---------------------------------------------------------------------
+    # 1) Inicia o userbot (conta de usuário)
+    #    Se for a primeira vez, pedirá código SMS no console.
+    # ---------------------------------------------------------------------
+    await userbot_client.start(phone=user_phone)
+    logger.info("[Userbot] Conectado com sucesso.")
 
-    # Mantém o bot rodando
-    await client.run_until_disconnected()
+    # ---------------------------------------------------------------------
+    # 2) Inicia o bot
+    # ---------------------------------------------------------------------
+    await bot_client.start(bot_token=BOT_TOKEN)
+    logger.info("[Bot] Iniciado e aguardando comandos...")
+
+    # Mantém ambos rodando
+    await bot_client.run_until_disconnected()
+    # Se preferir, pode usar asyncio.gather para aguardar ambos:
+    # await asyncio.gather(
+    #     bot_client.run_until_disconnected(),
+    #     userbot_client.run_until_disconnected()
+    # )
 
 
 if __name__ == "__main__":
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        logger.info("Bot interrompido pelo usuário.")
+        logger.info("Encerrado pelo usuário.")
     except Exception as e:
-        logger.error(f"Erro inesperado no bot: {e}")
+        logger.error(f"Erro inesperado: {e}")
